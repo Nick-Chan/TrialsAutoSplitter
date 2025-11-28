@@ -23,6 +23,9 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.util.ImageUtil;
 import net.runelite.client.util.Text;
 
+// debug
+import net.runelite.api.events.VarbitChanged;
+
 import javax.inject.Inject;
 import java.awt.image.BufferedImage;
 import java.io.PrintWriter;
@@ -38,20 +41,21 @@ public class TrialsAutoSplitterPlugin extends Plugin
     // LiveSplit interaction
     PrintWriter writer;
 
-    // Sailing trial split state
-    private static final int TOTAL_SPLITS = 10;
+    // Sailing trial config
     private int currentSplit = 0;
     private int lastTimeStart = 0;
     private int lastCompletedCount = 0;
     private boolean trialRunning = false;
+    private int totalSplitsThisRun = 0;
+    private int lostSuppliesTotalThisRun = 0;
+    private int lastCrystalSplit = 8;
+    private int trialTypeThisRun = 0;
 
-    // The Gwenith Glide Marlin
-    private static final int VARP_SAILING_BT_TIME_GWENITH_GLIDE_MARLIN_START = 4987;
-    private static final int VARP_SAILING_BT_TRIAL_GWENITH_GLIDE_MARLIN_COMPLETED = 5000;
-
-    // Lost Supplies varbits range (18448–18543 inclusive = 96 total)
+    // The Gwenith Glide
+    private static final int VARBIT_SAILING_BT_IN_TRIAL_GWENITH_GLIDE = 18410;
+    private static final int VARP_SAILING_BT_TIME_GWENITH_GLIDE_START = 4987;
+    private static final int VARP_SAILING_BT_TRIAL_GWENITH_GLIDE_COMPLETED = 5000;
     private static final int VARBIT_SAILING_BT_OBJECTIVE_BASE = 18448;
-    private static final int LOST_SUPPLIES_TOTAL = 96;
 
     // Lost Supplies tracking
     private boolean boxesSplit = false;
@@ -82,7 +86,7 @@ public class TrialsAutoSplitterPlugin extends Plugin
     protected void startUp()
     {
         // Load the icon
-        final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/inferno_split_icon.png");
+        final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "/trial_split_icon.png");
 
         // Create the panel
         panel = new TrialsAutoSplitterPanel(client, writer, config, this);
@@ -125,8 +129,9 @@ public class TrialsAutoSplitterPlugin extends Plugin
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        int timeStart = client.getVarpValue(VARP_SAILING_BT_TIME_GWENITH_GLIDE_MARLIN_START);
-        int completedCount = client.getVarpValue(VARP_SAILING_BT_TRIAL_GWENITH_GLIDE_MARLIN_COMPLETED);
+        int timeStart = client.getVarpValue(VARP_SAILING_BT_TIME_GWENITH_GLIDE_START);
+        int completedCount = client.getVarpValue(VARP_SAILING_BT_TRIAL_GWENITH_GLIDE_COMPLETED);
+        int trialTypeVar = client.getVarbitValue(VARBIT_SAILING_BT_IN_TRIAL_GWENITH_GLIDE);
 
         // Start of trial
         if (!trialRunning && lastTimeStart == 0 && timeStart != 0)
@@ -140,6 +145,30 @@ public class TrialsAutoSplitterPlugin extends Plugin
             sawAnySupplyThisRun = false;
 
             lastCompletedCount = completedCount;
+            trialTypeThisRun = trialTypeVar;
+
+            switch (trialTypeThisRun) {
+                case 2: // Swordfish
+                    totalSplitsThisRun = 5;
+                    lostSuppliesTotalThisRun = 30;
+                    lastCrystalSplit = 3;
+                    break;
+                case 3: // Shark
+                    totalSplitsThisRun = 7;
+                    lostSuppliesTotalThisRun = 60;
+                    lastCrystalSplit = 5;
+                    break;
+                case 4: // Marlin
+                    totalSplitsThisRun = 10;
+                    lostSuppliesTotalThisRun = 96;
+                    lastCrystalSplit = 8;
+                    break;
+                default:
+                    totalSplitsThisRun = 0;
+                    lostSuppliesTotalThisRun = 0;
+                    lastCrystalSplit = Integer.MAX_VALUE;
+                    break;
+            }
 
             // Fresh run in LiveSplit
             sendMessage("reset");
@@ -152,8 +181,8 @@ public class TrialsAutoSplitterPlugin extends Plugin
             {
                 boolean anyActive = false;
 
-                // Scan all 96 Lost Supplies varbits
-                for (int i = 0; i < LOST_SUPPLIES_TOTAL; i++)
+                // Scan all Lost Supplies varbits
+                for (int i = 0; i < lostSuppliesTotalThisRun; i++)
                 {
                     int id = VARBIT_SAILING_BT_OBJECTIVE_BASE + i;
                     int curr = client.getVarbitValue(id);
@@ -173,14 +202,20 @@ public class TrialsAutoSplitterPlugin extends Plugin
             }
 
             // Lost Supplies split
-            if (lostSuppliesDone && !boxesSplit && currentSplit >= 8)
+            if (lostSuppliesDone && !boxesSplit && currentSplit >= lastCrystalSplit)
             {
                 boxesSplit = true;
-
-                if (currentSplit < TOTAL_SPLITS)
+                if (currentSplit < totalSplitsThisRun)
                 {
                     currentSplit++;
                     sendMessage("split");
+
+                    client.addChatMessage(
+                            ChatMessageType.GAMEMESSAGE,
+                            "",
+                            "Lost Supplies Split",
+                            null
+                    );
                 }
             }
 
@@ -188,16 +223,23 @@ public class TrialsAutoSplitterPlugin extends Plugin
             if (!finishSplit && completedCount > lastCompletedCount)
             {
                 finishSplit = true;
-                if (currentSplit < TOTAL_SPLITS)
+                if (currentSplit < totalSplitsThisRun)
                 {
                     currentSplit++;
                     sendMessage("split");
+
+                    client.addChatMessage(
+                            ChatMessageType.GAMEMESSAGE,
+                            "",
+                            "Finish split",
+                            null
+                    );
                 }
                 lastCompletedCount = completedCount;
             }
         }
 
-        // ----- End/reset of trial -----
+        // End/reset of trial
         if (trialRunning && lastTimeStart != 0 && timeStart == 0)
         {
             trialRunning = false;
@@ -210,6 +252,20 @@ public class TrialsAutoSplitterPlugin extends Plugin
 
         lastTimeStart = timeStart;
         lastCompletedCount = completedCount;
+    }
+
+    @Subscribe
+    public void onVarbitChanged(VarbitChanged event)
+    {
+        int id = event.getVarbitId();
+        int value = event.getValue();
+/*
+        client.addChatMessage(
+                ChatMessageType.GAMEMESSAGE,
+                "",
+                "Varbit changed during trial: id=" + id + " value=" + value,
+                null
+        );*/
     }
 
     @Subscribe
@@ -236,20 +292,20 @@ public class TrialsAutoSplitterPlugin extends Plugin
             return;
         }
 
-        // Extract the "(x/8)" part
+        // Extract the "(x/x)" part
         int openIdx = message.indexOf('(');
         int slashIdx = message.indexOf('/', openIdx);
         int closeIdx = message.indexOf(')', slashIdx);
 
         if (openIdx == -1 || slashIdx == -1 || closeIdx == -1)
         {
-            return; // Unexpected format
+            return;
         }
 
         int imbueNumber;
         try
         {
-            String numStr = message.substring(openIdx + 1, slashIdx); // x in (x/8)
+            String numStr = message.substring(openIdx + 1, slashIdx);
             imbueNumber = Integer.parseInt(numStr);
         }
         catch (NumberFormatException e)
